@@ -149,6 +149,56 @@ def l2cap_listen(psm):
     return s
 
 
+def connect_to_host(mac, timeout=8):
+    """Device-initiated HID reconnect: open L2CAP to the host's control(17) + interrupt(19) PSMs.
+    This is how a real BT keyboard re-establishes its link on wake — the device connects to the
+    host — so a daemon restart heals itself instead of waiting for the host to reconnect."""
+    ctl = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+    ctl.settimeout(timeout)
+    ctl.connect((mac, PSM_CONTROL))
+    try:
+        itr = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+        itr.settimeout(timeout)
+        itr.connect((mac, PSM_INTERRUPT))
+    except OSError:
+        ctl.close()
+        raise
+    ctl.settimeout(None)
+    itr.settimeout(None)
+    return ctl, itr
+
+
+def paired_device_mac(bus, prefer=None):
+    """A paired device's address: `prefer` (config MAC) if it's paired, else the first paired
+    device, else None."""
+    mgr = dbus.Interface(bus.get_object(BUS_NAME, "/"), "org.freedesktop.DBus.ObjectManager")
+    paired = []
+    for _path, ifaces in mgr.GetManagedObjects().items():
+        d = ifaces.get("org.bluez.Device1")
+        if d and d.get("Paired"):
+            paired.append(str(d.get("Address")))
+    if prefer and prefer in paired:
+        return prefer
+    return paired[0] if paired else None
+
+
+def remove_all_bonds(bus):
+    """Remove every paired device from the adapter (used by `detachment-reset`)."""
+    adapter_path = find_adapter(bus)
+    adapter = dbus.Interface(bus.get_object(BUS_NAME, adapter_path), ADAPTER_IFACE)
+    mgr = dbus.Interface(bus.get_object(BUS_NAME, "/"), "org.freedesktop.DBus.ObjectManager")
+    removed = []
+    for path, ifaces in mgr.GetManagedObjects().items():
+        d = ifaces.get("org.bluez.Device1")
+        if d and d.get("Paired"):
+            try:
+                adapter.RemoveDevice(path)
+                removed.append(str(d.get("Address")))
+            except dbus.DBusException as e:
+                log(f"RemoveDevice {path} failed: {e.get_dbus_name()}")
+    return removed
+
+
 class HidLink:
     """Holds the accepted control+interrupt sockets and sends input reports to the host."""
     def __init__(self):

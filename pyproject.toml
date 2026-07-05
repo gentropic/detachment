@@ -11,8 +11,9 @@ dependencies = [
 ]
 
 [project.scripts]
-detachment-hidd = "detachment.hidd:main"   # system service: root BT HID emitter
+detachment-hidd = "detachment.hidd:main"    # system service: root BT HID emitter
 detachment = "detachment.tray:main"         # user service: capture agent + GTK tray/settings
+detachment-reset = "detachment.reset:main"  # remove BT bonds so you can pair fresh (run as root)
 
 [build-system]
 requires = ["setuptools>=64"]

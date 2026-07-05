@@ -92,16 +92,48 @@ class Jiggler:
                 self._dir = -self._dir
 
 
-def keepalive(link):
-    """Nudge a no-op mouse report every 20s so Windows doesn't idle-drop the BT HID link
-    (the classic BT/USB-HID selective-suspend disconnect)."""
-    while True:
-        time.sleep(20)
+def _keepalive_ok(link):
+    """No-op report keeps Windows from idle-dropping the link; a failure means the link is gone."""
+    try:
         if link.interrupt:
-            try:
-                link.interrupt.send(hid.mouse_rel_report(0, 0, 0))
-            except OSError:
-                pass
+            link.interrupt.send(hid.mouse_rel_report(0, 0, 0))
+        return True
+    except OSError:
+        return False
+
+
+def link_manager(bus, link):
+    """Keep the HID link up. Prefer DEVICE-INITIATED reconnect to the paired host (so a daemon
+    restart re-establishes the link itself — no "toggle it on Windows" dance); fall back to
+    LISTENING for a host-initiated connect; reconnect on drop (detected via the keepalive)."""
+    ctl_l = bluez.l2cap_listen(bluez.PSM_CONTROL)
+    itr_l = bluez.l2cap_listen(bluez.PSM_INTERRUPT)
+    log("listening on PSM 17/19 (host-initiated fallback)")
+    while True:
+        if not link.interrupt:
+            mac = bluez.paired_device_mac(bus, config.load()["target"].get("mac"))
+            if mac:
+                try:
+                    log(f"device-initiated connect to {mac}…")
+                    link.control, link.interrupt = bluez.connect_to_host(mac)
+                    log(f"HID link up (device-initiated → {mac})")
+                except OSError as e:
+                    log(f"device-initiated connect failed ({e}); waiting for host-initiated")
+            if not link.interrupt:                      # fall back: wait for the host to connect
+                c, _ = ctl_l.accept()
+                i, ia = itr_l.accept()
+                link.control, link.interrupt = c, i
+                log(f"HID link up (host-initiated ← {ia[0]})")
+        time.sleep(15)
+        if not _keepalive_ok(link):
+            log("HID link lost — re-establishing")
+            for s in (link.control, link.interrupt):
+                try:
+                    if s:
+                        s.close()
+                except OSError:
+                    pass
+            link.control = link.interrupt = None
 
 
 def serve(link, jiggler):
@@ -144,18 +176,16 @@ def main():
     threading.Thread(target=loop.run, daemon=True).start()
 
     link = bluez.HidLink()
-    ready = threading.Event()
-    threading.Thread(target=bluez.accept_channels, args=(link, ready.set), daemon=True).start()
+    # The link manager maintains the BT HID link in the background (device-initiated + fallback +
+    # reconnect). The command socket + jiggler run immediately — commands to a down link just drop.
+    threading.Thread(target=link_manager, args=(bus, link), daemon=True).start()
+    jiggler = Jiggler(link)
+    threading.Thread(target=jiggler.run, daemon=True).start()
+    jc = config.load()["jiggler"]     # daemon-side default; the agent relays the user's config
+    jiggler.configure(jc["enable"], jc["interval_sec"], jc["pixels"])
 
-    log("waiting for the Windows target to pair + connect… (Ctrl-C to quit)")
+    log("serving commands (BT link maintained in background) — Ctrl-C to quit")
     try:
-        ready.wait()
-        log("HID link up — serving commands")
-        threading.Thread(target=keepalive, args=(link,), daemon=True).start()
-        jiggler = Jiggler(link)
-        threading.Thread(target=jiggler.run, daemon=True).start()
-        jc = config.load()["jiggler"]     # daemon-side default (root config); agent relays user config
-        jiggler.configure(jc["enable"], jc["interval_sec"], jc["pixels"])
         serve(link, jiggler)
     except (KeyboardInterrupt, SystemExit):
         pass
