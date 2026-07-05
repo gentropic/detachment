@@ -14,22 +14,28 @@ cmd="${1:-blink}"
 filter="${2:-capslock}"
 match() { ls -d /sys/class/leds/*"$filter"* 2>/dev/null; }
 
+# Free the LED from its trigger so manual brightness writes take effect.
+free_trigger() { echo none > "$1/trigger" 2>/dev/null || true; }
+
 case "$cmd" in
   list)
     for l in /sys/class/leds/*/; do
       n=$(basename "$l")
-      printf '%-32s %s/%s\n' "$n" "$(cat "$l/brightness" 2>/dev/null)" "$(cat "$l/max_brightness" 2>/dev/null)"
+      trig=$(grep -o '\[[^]]*\]' "$l/trigger" 2>/dev/null)
+      printf '%-30s bright=%s/%s trigger=%s\n' "$n" \
+        "$(cat "$l/brightness" 2>/dev/null)" "$(cat "$l/max_brightness" 2>/dev/null)" "${trig:-?}"
     done ;;
 
   on|off)
     v=$([ "$cmd" = on ] && echo 1 || echo 0)
-    for l in $(match); do echo "$v -> $(basename "$l")"; echo "$v" > "$l/brightness"; done ;;
+    for l in $(match); do free_trigger "$l"; echo "$v -> $(basename "$l")"; echo "$v" > "$l/brightness"; done ;;
 
   blink)
     found=$(match)
     [ -z "$found" ] && { echo "no LEDs match '*$filter*'"; exit 1; }
     for l in $found; do
-      echo "--- blinking $(basename "$l") — is a key lighting up? ---"
+      free_trigger "$l"
+      echo "--- blinking $(basename "$l") (trigger freed) — is a key lighting up? ---"
       for _ in 1 2 3 4 5 6; do echo 1 > "$l/brightness"; sleep 0.4; echo 0 > "$l/brightness"; sleep 0.3; done
     done
     echo "done." ;;
@@ -37,6 +43,7 @@ case "$cmd" in
   stick)
     l="/sys/class/leds/$filter"
     [ -e "$l/brightness" ] || { echo "no such LED: $filter (use the full name from 'list')"; exit 1; }
+    free_trigger "$l"
     echo 1 > "$l/brightness"
     echo -n "set 1; re-reading for 5s: "
     for _ in $(seq 1 10); do printf '%s' "$(cat "$l/brightness")"; sleep 0.5; done
