@@ -25,8 +25,7 @@ from gi.repository import GLib
 from . import bluez, config, hid, led
 
 SOCK_PATH = config.SOCKET_PATH
-LED_PATH = None   # resolved in main() (a *::capslock LED, or None)
-LEDCTL = None     # LedController instance
+LEDCTL = None     # LedController instance (resolves its own LED path)
 
 
 def log(msg):
@@ -99,26 +98,32 @@ class Jiggler:
 
 class LedController:
     """Three-state status LED: off = no HID link, heartbeat = connected/idle, solid = driving the
-    target. `captured` is set by the agent's E command; link state is read from the HidLink."""
-    def __init__(self, path, link):
-        self.path = path
+    target. `captured` is set by the agent's E command; link state is read from the HidLink. Resolves
+    the LED path in the loop (keyd re-creates input devices, so it may appear after startup)."""
+    def __init__(self, link):
         self.link = link
         self.captured = False
 
     def run(self):
-        if not self.path:
-            return
+        path = None
         while True:
+            if not path:
+                path = led.find_led()
+                if path:
+                    log(f"status LED: {path}")
+                else:
+                    time.sleep(2)
+                    continue
             if not self.link.interrupt:
-                led.set_led(self.path, False)
+                led.set_led(path, False)
                 time.sleep(0.7)
             elif self.captured:
-                led.set_led(self.path, True)       # solid while driving
+                led.set_led(path, True)            # solid while driving
                 time.sleep(0.7)
             else:
-                led.set_led(self.path, True)       # connected/idle heartbeat
+                led.set_led(path, True)            # connected/idle heartbeat
                 time.sleep(0.12)
-                led.set_led(self.path, False)
+                led.set_led(path, False)
                 time.sleep(1.8)
 
 
@@ -197,11 +202,7 @@ def serve(link, jiggler):
 
 
 def main():
-    global LED_PATH
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))   # -> finally: cleanup on kill/stop
-    LED_PATH = led.find_led()
-    if LED_PATH:
-        log(f"status LED: {LED_PATH}")
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     profilemgr, agentmgr, registered = bluez.setup_bluez(bus)
@@ -214,7 +215,7 @@ def main():
     # The link manager maintains the BT HID link in the background (device-initiated + fallback +
     # reconnect). The command socket + jiggler run immediately — commands to a down link just drop.
     threading.Thread(target=link_manager, args=(bus, link), daemon=True).start()
-    LEDCTL = LedController(LED_PATH, link)
+    LEDCTL = LedController(link)
     threading.Thread(target=LEDCTL.run, daemon=True).start()
     jiggler = Jiggler(link)
     threading.Thread(target=jiggler.run, daemon=True).start()
@@ -227,7 +228,7 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        led.set_led(LED_PATH, False)
+        led.set_led(led.find_led(), False)
         bluez.cleanup(profilemgr, agentmgr, registered)
         if os.path.exists(SOCK_PATH):
             os.unlink(SOCK_PATH)
