@@ -55,13 +55,13 @@ in
     };
 
     # ── user service: capture agent + tray (needs the graphical session) ─────────────────────
-    # NOT auto-started (no wantedBy): arming the screen-edge barrier on every login would hijack
-    # the edge during normal desktop use. Start on demand — `systemctl --user start detachment`,
-    # or the tray/shortcut (stage 4). Still stops cleanly with the session (partOf).
+    # Auto-started: the tray comes up DISARMED (indicator present, capture off) so it doesn't
+    # hijack the screen edge — you arm it from the tray. Stops cleanly with the session (partOf).
     systemd.user.services.detachment = {
       description = "detachment — capture agent + tray";
       partOf = [ "graphical-session.target" ];
       after = [ "graphical-session.target" ];
+      wantedBy = [ "graphical-session.target" ];
       serviceConfig = {
         ExecStart = lib.getExe cfg.package;
         Restart = "on-failure";
