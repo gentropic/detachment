@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>detachment</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>detachment</h1>
+    <span id="state" class="pill">…</span>
+  </header>
+
+  <section class="actions">
+    <button id="toggle">Enable capture</button>
+    <button id="jiggler">Jiggler</button>
+  </section>
+
+  <h2>Arrangement</h2>
+  <p class="hint">jt's screens (fixed — rearrange them in GNOME Displays). Click an <b>outer edge</b>
+    to attach the target there.</p>
+  <canvas id="canvas" width="640" height="360"></canvas>
+
+  <h2>Settings</h2>
+  <div class="grid">
+    <label>Target width <input id="tw" type="number" min="320" max="16000"></label>
+    <label>Target height <input id="th" type="number" min="240" max="16000"></label>
+    <label class="chk"><input id="walk" type="checkbox"> Return by walking back to the edge</label>
+    <label class="chk"><input id="cesc" type="checkbox"> CapsLock+Esc release</label>
+    <label class="chk"><input id="inv" type="checkbox"> Invert vertical scroll</label>
+    <label class="chk"><input id="jig" type="checkbox"> Jiggler enabled</label>
+    <label>Jiggler interval (s) <input id="jint" type="number" min="1" max="600"></label>
+    <label>Jiggler pixels <input id="jpx" type="number" min="1" max="50"></label>
+  </div>
+  <p class="hint">Edge / target changes apply on restart:
+    <code>systemctl --user restart detachment</code></p>
+  <button id="save" class="primary">Save</button>
+
+  <script src="app.js"></script>
+</body>
+</html>

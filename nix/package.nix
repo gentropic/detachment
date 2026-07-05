@@ -25,7 +25,7 @@ python3Packages.buildPythonApplication {
   # incl. hidd/bluez (dbus+gi only) so the build catches syntax/import errors in the daemon.
   pythonImportsCheck = [
     "detachment.config" "detachment.hid" "detachment.geometry" "detachment.evdev_hid"
-    "detachment.bluez" "detachment.hidd"
+    "detachment.bluez" "detachment.hidd" "detachment.websettings"
   ];
 
   meta = {

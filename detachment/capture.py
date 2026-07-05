@@ -59,6 +59,7 @@ class InputCapture:
         self._req_serial = 0
         self.ready = False        # portal session set up (barrier can be armed)
         self.armed = False        # barrier currently enabled
+        self.zone = None          # the chosen jt monitor (w,h,x,y) the barrier attaches to
         self.on_state_change = None  # callback (tray) invoked on ready/armed/captured changes
 
     # ── portal Request/Response helper ───────────────────────────────────────────────────────
@@ -110,8 +111,8 @@ class InputCapture:
         self.zone_set = results["zone_set"]
         self.zones = results["zones"]   # a(uuii): width, height, x, y
         log(f"zones (set {int(self.zone_set)}): {[tuple(int(v) for v in z) for z in self.zones]}")
-        # Barrier on the RIGHT edge of the first zone: a vertical line x=right, y=top..bottom.
-        w, h, zx, zy = (int(v) for v in self.zones[0])
+        self.zone = self._pick_zone()   # which jt monitor the barrier attaches to (config-driven)
+        w, h, zx, zy = self.zone
         pos = self._barrier_line(w, h, zx, zy)   # line sits ON the edge, not one pixel inside
         barrier = {"barrier_id": dbus.UInt32(BARRIER_ID),
                    "position": dbus.Struct(pos, signature="iiii")}
@@ -122,8 +123,20 @@ class InputCapture:
                    dbus.Array([barrier], signature="a{sv}"), dbus.UInt32(self.zone_set)],
                   token, self._on_barriers)
 
+    def _pick_zone(self):
+        """The zone (w,h,x,y) the barrier attaches to: the one matching config barrier_monitor
+        {x,y,w,h}, else the first zone. (jt's own monitor arrangement is fixed elsewhere; here we
+        only choose which of its monitors an outer-edge barrier lives on.)"""
+        zones = [tuple(int(v) for v in z) for z in self.zones]
+        mon = config.load().get("barrier_monitor")
+        if mon:
+            for (w, h, zx, zy) in zones:
+                if (zx, zy, w, h) == (mon.get("x"), mon.get("y"), mon.get("w"), mon.get("h")):
+                    return (w, h, zx, zy)
+        return zones[0]
+
     def _barrier_line(self, w, h, zx, zy):
-        """A line along the requested edge of the (first) zone, as (x1,y1,x2,y2)."""
+        """A line along the requested edge of the chosen zone, as (x1,y1,x2,y2)."""
         if self.edge == "left":
             return (zx, zy, zx, zy + h)
         if self.edge == "top":

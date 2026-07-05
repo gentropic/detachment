@@ -30,7 +30,8 @@ DEFAULTS = {
         "height": 1080,
         "mac": None,            # BT address to (re)connect to; None = whatever paired host connects
     },
-    "barrier_edge": "right",    # left | right | top | bottom  — where the target is, relative to jt
+    "barrier_edge": "right",    # left | right | top | bottom  — which OUTER edge the target attaches to
+    "barrier_monitor": None,    # {x,y,w,h} of jt's monitor to attach to; null = first/primary zone
     "release": {
         "walk_back": True,      # return to jt by walking the cursor back through the entry edge
         "capslock_esc": True,   # CapsLock+Esc panic release
@@ -44,6 +45,11 @@ DEFAULTS = {
         "enable": False,
         "interval_sec": 30,
         "pixels": 2,
+    },
+    "web": {                    # the settings/editor web UI (served by the tray process)
+        "enable": True,
+        "bind": "127.0.0.1",    # tailnet opt-in: set to jt's tailnet IP to configure remotely
+        "port": 8730,
     },
     "socket": SOCKET_PATH,
 }

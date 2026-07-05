@@ -1,0 +1,39 @@
+:root {
+  --bg: #15171A; --deep: #0E1012; --surface: #1D2024; --line: #2A2E33;
+  --text: #DDDCDA; --dim: #8A8F96; --orange: #FB9044; --blue: #008CD1;
+  --green: #5CCB80; --yellow: #FFD73A; --red: #E75A51;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0 auto; max-width: 720px; padding: 20px;
+  background: var(--deep); color: var(--text);
+  font-family: "Barlow", system-ui, sans-serif;
+}
+header { display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .5px; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--dim); margin: 26px 0 8px; }
+.pill {
+  font-family: "Space Mono", ui-monospace, monospace; font-size: 12px;
+  padding: 3px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line);
+}
+.pill.armed { color: var(--yellow); border-color: var(--yellow); }
+.pill.captured { color: var(--orange); border-color: var(--orange); }
+.actions { display: flex; gap: 10px; margin-top: 16px; }
+button {
+  font-family: inherit; font-size: 14px; cursor: pointer;
+  background: var(--surface); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 16px;
+}
+button:hover { border-color: var(--orange); }
+button.on, button.primary { background: var(--orange); color: var(--deep); border-color: var(--orange); font-weight: 600; }
+canvas { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; width: 100%; height: auto; display: block; touch-action: none; }
+.hint { color: var(--dim); font-size: 12px; margin: 8px 0; }
+code { font-family: "Space Mono", ui-monospace, monospace; color: var(--blue); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--dim); }
+label.chk { flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; color: var(--text); }
+input[type=number] {
+  background: var(--surface); color: var(--text); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px; font-family: "Space Mono", ui-monospace, monospace;
+}
+#save { margin-top: 14px; }

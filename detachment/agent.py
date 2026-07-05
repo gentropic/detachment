@@ -162,7 +162,7 @@ class Agent(capture.InputCapture):
     def _on_activated(self, session, options):
         self.activation_id = int(options.get("activation_id", 0))
         pos = options.get("cursor_position")
-        zw, zh, _, _ = (int(v) for v in self.zones[0])   # this box's zone size
+        zw, zh, _, _ = self.zone   # the chosen jt monitor's size
         self.vc = geometry.VirtualCursor(self._tw, self._th, self.edge)
         # fraction along the barrier where we crossed: vertical edge -> Y/zh, horizontal -> X/zw
         if pos:
