@@ -11,6 +11,7 @@ Runs as root (binds L2CAP PSMs 17/19, talks to BlueZ). The target pairs once (au
 HID SDP record). Installed as the system service `detachment-hidd` by the gcunix module.
 """
 import os
+import random
 import signal
 import socket
 import sys
@@ -30,7 +31,7 @@ def log(msg):
     print(f"[hidd] {msg}", flush=True)
 
 
-def handle_line(link, line):
+def handle_line(link, jiggler, line):
     parts = line.split()
     if not parts:
         return
@@ -45,10 +46,50 @@ def handle_line(link, line):
             mod = int(parts[1])
             keys = [int(c) for c in parts[2:8]]
             link.send(hid.keyboard_report(mod, keys))
+        elif cmd == "J":                   # J on|off [interval_sec] [pixels] — mouse jiggler
+            on = parts[1].lower() in ("on", "1", "true")
+            interval = float(parts[2]) if len(parts) > 2 else jiggler.interval
+            pixels = int(parts[3]) if len(parts) > 3 else jiggler.pixels
+            jiggler.configure(on, interval, pixels)
         else:
             log(f"unknown command {cmd!r}")
     except Exception as e:   # never let one malformed line kill the serve loop
         log(f"bad command {line!r}: {e}")
+
+
+class Jiggler:
+    """Keep the target awake: every ~interval (±30% jitter) a tiny relative move, alternating
+    direction so it stays put over pairs. Off by default; the agent/tray toggles it via `J`."""
+    def __init__(self, link):
+        self.link = link
+        self.enabled = False
+        self.interval = 30.0
+        self.pixels = 2
+        self._dir = 1
+        self._wake = threading.Event()
+
+    def configure(self, enabled, interval, pixels):
+        self.enabled = bool(enabled)
+        self.interval = max(1.0, float(interval))
+        self.pixels = max(1, int(pixels))
+        self._wake.set()   # re-evaluate the wait immediately
+        log(f"jiggler {'on' if self.enabled else 'off'} ({self.pixels}px / ~{self.interval:.0f}s)")
+
+    def run(self):
+        while True:
+            if not self.enabled:
+                self._wake.wait(timeout=5)
+                self._wake.clear()
+                continue
+            wait = self.interval * (1 + (random.random() * 2 - 1) * 0.3)   # ±30% jitter
+            reconfigured = self._wake.wait(timeout=wait)
+            self._wake.clear()
+            if reconfigured or not self.enabled:
+                continue
+            if self.link.interrupt:
+                move = self.pixels * self._dir
+                self.link.send(hid.mouse_rel_report(0, move, move))
+                self._dir = -self._dir
 
 
 def keepalive(link):
@@ -63,7 +104,7 @@ def keepalive(link):
                 pass
 
 
-def serve(link):
+def serve(link, jiggler):
     sockdir = os.path.dirname(SOCK_PATH)
     if sockdir:
         os.makedirs(sockdir, exist_ok=True)
@@ -87,7 +128,7 @@ def serve(link):
                     buf += data
                     while b"\n" in buf:
                         line, buf = buf.split(b"\n", 1)
-                        handle_line(link, line.decode(errors="replace").strip())
+                        handle_line(link, jiggler, line.decode(errors="replace").strip())
         except OSError as e:
             log(f"agent connection error: {e}")
         log("agent disconnected — waiting for reconnect")
@@ -111,7 +152,11 @@ def main():
         ready.wait()
         log("HID link up — serving commands")
         threading.Thread(target=keepalive, args=(link,), daemon=True).start()
-        serve(link)
+        jiggler = Jiggler(link)
+        threading.Thread(target=jiggler.run, daemon=True).start()
+        jc = config.load()["jiggler"]     # daemon-side default (root config); agent relays user config
+        jiggler.configure(jc["enable"], jc["interval_sec"], jc["pixels"])
+        serve(link, jiggler)
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:

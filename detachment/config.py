@@ -40,6 +40,11 @@ DEFAULTS = {
         "detent_120": 120.0,    # libei discrete units per HID wheel step
         "smooth_px": 60.0,      # smooth-scroll px per HID wheel step
     },
+    "jiggler": {                # keep the target awake: a tiny move every ~interval (±30% jitter)
+        "enable": False,
+        "interval_sec": 30,
+        "pixels": 2,
+    },
     "socket": SOCKET_PATH,
 }
 

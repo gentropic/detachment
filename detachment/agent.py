@@ -67,6 +67,10 @@ class Agent(capture.InputCapture):
         self.hidsock = None
         self._connect_hid()
 
+        # relay the user's jiggler setting to the always-on daemon (which holds the HID link)
+        jc = cfg["jiggler"]
+        self._send(f"J {'on' if jc['enable'] else 'off'} {jc['interval_sec']} {jc['pixels']}\n")
+
     # ── target output ────────────────────────────────────────────────────────────────────────
     def _connect_hid(self):
         try:

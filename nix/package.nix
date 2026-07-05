@@ -16,8 +16,12 @@ python3Packages.buildPythonApplication {
       --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ libei ]}
   '';
 
-  # importing detachment.agent/capture dlopens libei (absent in the sandbox) — check pure modules.
-  pythonImportsCheck = [ "detachment.config" "detachment.hid" "detachment.geometry" ];
+  # importing detachment.agent/capture dlopens libei (absent in the sandbox) — check the rest,
+  # incl. hidd/bluez (dbus+gi only, no snegg) so build catches syntax/import errors in the daemon.
+  pythonImportsCheck = [
+    "detachment.config" "detachment.hid" "detachment.geometry" "detachment.evdev_hid"
+    "detachment.bluez" "detachment.hidd"
+  ];
 
   meta = {
     description = "A Linux box as a Bluetooth HID device driven by a Wayland screen-edge capture region";
