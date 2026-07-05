@@ -280,13 +280,24 @@ def run(bus=None, loop=None, start_armed=True):
     ag = Agent(bus, loop)
     ag._start_armed = start_armed
     ag.start()
-    # Release trigger. keyd maps CapsLock→Hyper, so the agent never sees a raw CapsLock in the
-    # captured stream, and GNOME's GlobalShortcuts portal won't honour a preferred_trigger (it
-    # returned BindShortcuts=2 here). Instead a GNOME custom keybinding (gcunix dconf: Hyper+Esc)
-    # sends SIGUSR1 to this process — mutter processes keybindings above the InputCapture grab, so
-    # it fires even while capturing. SIGUSR1 -> release back to local.
-    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
-                         lambda *_: (ag.release(), GLib.SOURCE_CONTINUE)[1])
+    # Control signals from GNOME custom keybindings (gcunix dconf). keyd maps CapsLock→Hyper, so the
+    # agent never sees a raw CapsLock in the captured stream, and GNOME's GlobalShortcuts portal
+    # won't honour a preferred_trigger (BindShortcuts=2 here). Instead the compositor runs a keybind
+    # that signals this process — mutter handles keybindings ABOVE the InputCapture grab, so they
+    # fire even while capturing.
+    #   SIGUSR1 (Hyper+Esc) -> release capture back to local (panic).
+    #   SIGUSR2 (Hyper+F1)  -> toggle the barrier armed/disarmed (target 1; F2..F12 land here when
+    #                          multi-target arrives, selecting the Nth target instead of a toggle).
+    def _sig_release(*_):
+        ag.release()
+        return GLib.SOURCE_CONTINUE
+
+    def _sig_toggle(*_):
+        ag.disable() if ag.armed else ag.enable()
+        return GLib.SOURCE_CONTINUE
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, _sig_release)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, _sig_toggle)
     return ag, loop
 
 
