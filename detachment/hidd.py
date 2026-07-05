@@ -26,6 +26,7 @@ from . import bluez, config, hid, led
 
 SOCK_PATH = config.SOCKET_PATH
 LED_PATH = None   # resolved in main() (a *::capslock LED, or None)
+LEDCTL = None     # LedController instance
 
 
 def log(msg):
@@ -52,8 +53,9 @@ def handle_line(link, jiggler, line):
             interval = float(parts[2]) if len(parts) > 2 else jiggler.interval
             pixels = int(parts[3]) if len(parts) > 3 else jiggler.pixels
             jiggler.configure(on, interval, pixels)
-        elif cmd == "E":                   # E 1|0 — status LED (e.g. jt's CapsLock light)
-            led.set_led(LED_PATH, parts[1].lower() not in ("0", "off", "false"))
+        elif cmd == "E":                   # E 1|0 — capture state for the status LED
+            if LEDCTL:
+                LEDCTL.captured = parts[1].lower() not in ("0", "off", "false")
         else:
             log(f"unknown command {cmd!r}")
     except Exception as e:   # never let one malformed line kill the serve loop
@@ -93,6 +95,31 @@ class Jiggler:
                 move = self.pixels * self._dir
                 self.link.send(hid.mouse_rel_report(0, move, move))
                 self._dir = -self._dir
+
+
+class LedController:
+    """Three-state status LED: off = no HID link, heartbeat = connected/idle, solid = driving the
+    target. `captured` is set by the agent's E command; link state is read from the HidLink."""
+    def __init__(self, path, link):
+        self.path = path
+        self.link = link
+        self.captured = False
+
+    def run(self):
+        if not self.path:
+            return
+        while True:
+            if not self.link.interrupt:
+                led.set_led(self.path, False)
+                time.sleep(0.7)
+            elif self.captured:
+                led.set_led(self.path, True)       # solid while driving
+                time.sleep(0.7)
+            else:
+                led.set_led(self.path, True)       # connected/idle heartbeat
+                time.sleep(0.12)
+                led.set_led(self.path, False)
+                time.sleep(1.8)
 
 
 def _keepalive_ok(link):
@@ -182,10 +209,13 @@ def main():
     loop = GLib.MainLoop()
     threading.Thread(target=loop.run, daemon=True).start()
 
+    global LEDCTL
     link = bluez.HidLink()
     # The link manager maintains the BT HID link in the background (device-initiated + fallback +
     # reconnect). The command socket + jiggler run immediately — commands to a down link just drop.
     threading.Thread(target=link_manager, args=(bus, link), daemon=True).start()
+    LEDCTL = LedController(LED_PATH, link)
+    threading.Thread(target=LEDCTL.run, daemon=True).start()
     jiggler = Jiggler(link)
     threading.Thread(target=jiggler.run, daemon=True).start()
     jc = config.load()["jiggler"]     # daemon-side default; the agent relays the user's config

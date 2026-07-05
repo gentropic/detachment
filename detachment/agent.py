@@ -278,6 +278,11 @@ def run(bus=None, loop=None, start_armed=True):
     ag = Agent(bus, loop)
     ag._start_armed = start_armed
     ag.start()
+    # Hyper+Esc global shortcut (fires ABOVE the capture layer, unlike keys in the captured stream —
+    # needed once keyd maps CapsLock→Hyper). Falls back silently if the portal isn't available.
+    from . import shortcuts
+    ag._shortcuts = shortcuts.GlobalShortcuts(bus, lambda sid: ag.release() if sid == "release" else None)
+    ag._shortcuts.start()
     return ag, loop
 
 
