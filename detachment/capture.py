@@ -57,6 +57,9 @@ class InputCapture:
         self._seat = None
         self._devices = []   # keep device refs alive (snegg refcounts; GC would drop them)
         self._req_serial = 0
+        self.ready = False        # portal session set up (barrier can be armed)
+        self.armed = False        # barrier currently enabled
+        self.on_state_change = None  # callback (tray) invoked on ready/armed/captured changes
 
     # ── portal Request/Response helper ───────────────────────────────────────────────────────
     def _new_token(self, kind):
@@ -143,14 +146,46 @@ class InputCapture:
         self._eis = _FdHolder(eis_fd)   # keep a ref so the fd isn't GC'd/closed
         self.receiver = ei.Receiver.create_for_fd(self._eis, "detachment-capture")
         GLib.io_add_watch(self.receiver.fd, GLib.IO_IN, self._on_ei_event)
-        # Enable arms the barrier.
-        log(f"Enable — barrier armed on the {self.edge} edge.")
-        self.portal.Enable(self.session, {}, signature="oa{sv}")
         # Activation signals.
         self.bus.add_signal_receiver(self._on_activated, signal_name="Activated",
                                      dbus_interface=IC_IFACE)
         self.bus.add_signal_receiver(self._on_deactivated, signal_name="Deactivated",
                                      dbus_interface=IC_IFACE)
+        self.ready = True
+        log("capture session ready")
+        self._on_ready()
+
+    def _on_ready(self):
+        """Hook fired once the portal session is set up. Default: arm immediately (CLI/standalone).
+        The tray overrides this to stay disarmed until the user enables it."""
+        self.enable()
+
+    def enable(self):
+        """Arm the barrier (portal Enable)."""
+        if not self.ready or self.armed:
+            return
+        self.portal.Enable(self.session, {}, signature="oa{sv}")
+        self.armed = True
+        log(f"barrier ARMED on the {self.edge} edge")
+        self._notify()
+
+    def disable(self):
+        """Disarm the barrier (release if captured, then portal Disable)."""
+        if not self.armed:
+            return
+        if getattr(self, "captured", False) and hasattr(self, "release"):
+            self.release()
+        try:
+            self.portal.Disable(self.session, {}, signature="oa{sv}")
+        except dbus.DBusException as e:
+            log(f"Disable failed: {e.get_dbus_name()}")
+        self.armed = False
+        log("barrier DISARMED")
+        self._notify()
+
+    def _notify(self):
+        if self.on_state_change:
+            self.on_state_change()
 
     def _on_activated(self, session, options):
         pos = options.get("cursor_position")

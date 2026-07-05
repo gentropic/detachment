@@ -67,9 +67,13 @@ class Agent(capture.InputCapture):
         self.hidsock = None
         self._connect_hid()
 
-        # relay the user's jiggler setting to the always-on daemon (which holds the HID link)
+        # jiggler state, relayed to the always-on daemon (which holds the HID link)
         jc = cfg["jiggler"]
-        self._send(f"J {'on' if jc['enable'] else 'off'} {jc['interval_sec']} {jc['pixels']}\n")
+        self._jig_on = bool(jc["enable"])
+        self._jig_interval = jc["interval_sec"]
+        self._jig_pixels = jc["pixels"]
+        self._start_armed = True   # the tray sets this False to come up disarmed
+        self.set_jiggler(self._jig_on)
 
     # ── target output ────────────────────────────────────────────────────────────────────────
     def _connect_hid(self):
@@ -123,6 +127,20 @@ class Agent(capture.InputCapture):
         keys = (self.kkeys[:6] + [0, 0, 0, 0, 0, 0])[:6]
         self._send("K " + str(self.kmod) + " " + " ".join(str(c) for c in keys) + "\n")
 
+    def set_jiggler(self, on, interval=None, pixels=None):
+        self._jig_on = bool(on)
+        if interval is not None:
+            self._jig_interval = interval
+        if pixels is not None:
+            self._jig_pixels = pixels
+        self._send(f"J {'on' if self._jig_on else 'off'} {self._jig_interval} {self._jig_pixels}\n")
+
+    def _on_ready(self):
+        if self._start_armed:
+            self.enable()
+        else:
+            self._notify()
+
     def release(self):
         if not self.captured:
             return
@@ -158,10 +176,12 @@ class Agent(capture.InputCapture):
         self.captured = True
         self._send_abs()
         log(f"╔═ CAPTURED — driving target (edge={self.edge})")
+        self._notify()
 
     def _on_deactivated(self, session, options):
         self.captured = False
         log("╚═ LOCAL")
+        self._notify()
 
     # ── the event glue ──────────────────────────────────────────────────────────────────────
     def _on_ei_event(self, *_):
@@ -230,12 +250,13 @@ class Agent(capture.InputCapture):
         self._send_keys()
 
 
-def run(bus=None, loop=None):
+def run(bus=None, loop=None, start_armed=True):
     """Create + start the agent on a session bus and GLib loop (reused by the tray app)."""
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = bus or dbus.SessionBus()
     loop = loop or GLib.MainLoop()
     ag = Agent(bus, loop)
+    ag._start_armed = start_armed
     ag.start()
     return ag, loop
 
