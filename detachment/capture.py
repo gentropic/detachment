@@ -200,6 +200,35 @@ class InputCapture:
         if self.on_state_change:
             self.on_state_change()
 
+    def reconfigure(self):
+        """Re-read barrier edge/monitor from config and re-place the barrier live (no restart).
+        Brackets with disable/enable if it was armed."""
+        if not self.ready:
+            return
+        new_edge = config.load().get("barrier_edge", self.edge)
+        new_zone = self._pick_zone()
+        if new_edge == self.edge and new_zone == self.zone:
+            return   # nothing to move
+        was_armed = self.armed
+        if was_armed:
+            self.disable()
+        self.edge, self.zone = new_edge, new_zone
+        w, h, zx, zy = self.zone
+        barrier = {"barrier_id": dbus.UInt32(BARRIER_ID),
+                   "position": dbus.Struct(self._barrier_line(w, h, zx, zy), signature="iiii")}
+        token = self._new_token("req")
+        self.call("SetPointerBarriers", "oa{sv}aa{sv}u",
+                  [self.session, {"handle_token": token},
+                   dbus.Array([barrier], signature="a{sv}"), dbus.UInt32(self.zone_set)],
+                  token, lambda r: self._on_reconfigured(r, was_armed))
+
+    def _on_reconfigured(self, results, was_armed):
+        failed = [int(x) for x in results.get("failed_barriers", [])]
+        log(f"reconfigured barrier -> {self.edge} edge" + (f" (FAILED {failed})" if failed else ""))
+        if was_armed:
+            self.enable()
+        self._notify()
+
     def _on_activated(self, session, options):
         pos = options.get("cursor_position")
         log(f"╔═ CAPTURED (activation {int(options.get('activation_id', 0))}) at {tuple(pos) if pos else '?'}")

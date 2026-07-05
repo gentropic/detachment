@@ -92,6 +92,7 @@ def _make_handler(backend):
                 data = {}
             if self.path == "/api/config":
                 config.save(data)
+                GLib.idle_add(backend.agent.reload)   # apply live on the main thread
                 self._json({"ok": True})
             elif self.path == "/api/action":
                 backend.action(data.get("action", ""))

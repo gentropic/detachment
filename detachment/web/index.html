@@ -18,8 +18,8 @@
   </section>
 
   <h2>Arrangement</h2>
-  <p class="hint">jt's screens (fixed — rearrange them in GNOME Displays). Click an <b>outer edge</b>
-    to attach the target there.</p>
+  <p class="hint">jt's screens (fixed — rearrange them in GNOME Displays). <b>Drag the target tile</b>
+    onto a valid outer edge; it snaps to the nearest one.</p>
   <canvas id="canvas" width="640" height="360"></canvas>
 
   <h2>Settings</h2>
@@ -33,8 +33,8 @@
     <label>Jiggler interval (s) <input id="jint" type="number" min="1" max="600"></label>
     <label>Jiggler pixels <input id="jpx" type="number" min="1" max="50"></label>
   </div>
-  <p class="hint">Edge / target changes apply on restart:
-    <code>systemctl --user restart detachment</code></p>
+  <p class="hint">Changes apply <b>live</b> on Save. (A new pointer size takes effect the next time you
+    cross the edge.)</p>
   <button id="save" class="primary">Save</button>
 
   <script src="app.js"></script>

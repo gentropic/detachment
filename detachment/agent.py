@@ -135,6 +135,24 @@ class Agent(capture.InputCapture):
             self._jig_pixels = pixels
         self._send(f"J {'on' if self._jig_on else 'off'} {self._jig_interval} {self._jig_pixels}\n")
 
+    def reload(self):
+        """Re-read config and apply everything live (target size, release, scroll, jiggler, barrier
+        edge/monitor) — no service restart. Called after a web /api/config save."""
+        cfg = config.load()
+        tgt = cfg["target"]
+        self._tw, self._th = int(tgt["width"]), int(tgt["height"])
+        self._walk_back = bool(cfg["release"]["walk_back"])
+        self._capslock_esc = bool(cfg["release"]["capslock_esc"])
+        sc = cfg["scroll"]
+        self._scroll_sign = -1.0 if sc["invert_vertical"] else 1.0
+        self._detent = float(sc["detent_120"])
+        self._smooth = float(sc["smooth_px"])
+        jc = cfg["jiggler"]
+        self.set_jiggler(jc["enable"], jc["interval_sec"], jc["pixels"])
+        self.reconfigure()   # move the barrier if the edge/monitor changed
+        log("config reloaded (live)")
+        return False   # for GLib.idle_add
+
     def _on_ready(self):
         if self._start_armed:
             self.enable()

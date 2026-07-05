@@ -8,7 +8,8 @@ const ctx = canvas.getContext("2d");
 let state = null;               // {armed, captured, monitors, config}
 let cfg = null;                 // config (server copy; form is only read on Save)
 let placement = null;          // {monitor:{x,y,w,h}|null, edge}
-let handles = [];              // clickable outer edges
+let handles = [];              // outer edges (snap targets)
+let dragging = false, dragXY = null, targetRect = null, snapTo = null;
 
 async function post(path, body) {
   await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -97,32 +98,61 @@ function draw() {
     }
   }
 
-  // schematic target tile on the active edge
+  // target tile: rests on the active edge, or follows the cursor + snaps while dragging
   const [mx, my] = S(activeMon.x, activeMon.y);
   const mw = activeMon.w * scale, mh = activeMon.h * scale, g = 10;
-  let tx, ty, tw, th;
-  if (placement.edge === "right") { tw = mw * 0.7; th = mh; tx = mx + mw + g; ty = my; }
-  else if (placement.edge === "left") { tw = mw * 0.7; th = mh; tx = mx - g - tw; ty = my; }
-  else if (placement.edge === "top") { tw = mw; th = mh * 0.7; tx = mx; ty = my - g - th; }
-  else { tw = mw; th = mh * 0.7; tx = mx; ty = my + mh + g; }
-  ctx.fillStyle = "rgba(92,203,128,.14)"; ctx.strokeStyle = "#5CCB80"; ctx.lineWidth = 1.5;
+  const horiz = placement.edge === "left" || placement.edge === "right";
+  const tw = horiz ? mw * 0.7 : mw, th = horiz ? mh : mh * 0.7;
+  let tx, ty;
+  if (dragging && dragXY) {
+    tx = dragXY.x - tw / 2; ty = dragXY.y - th / 2;
+    snapTo = nearestEdge(dragXY);                 // where it will land
+    if (snapTo) { ctx.fillStyle = "#FB9044"; const r = snapTo.rect; ctx.fillRect(r.x, r.y, r.w, r.h); }
+  } else {
+    snapTo = null;
+    if (placement.edge === "right") { tx = mx + mw + g; ty = my; }
+    else if (placement.edge === "left") { tx = mx - g - tw; ty = my; }
+    else if (placement.edge === "top") { tx = mx; ty = my - g - th; }
+    else { tx = mx; ty = my + mh + g; }
+  }
+  targetRect = { x: tx, y: ty, w: tw, h: th };
+  ctx.fillStyle = dragging ? "rgba(92,203,128,.30)" : "rgba(92,203,128,.14)";
+  ctx.strokeStyle = "#5CCB80"; ctx.lineWidth = 1.5;
   ctx.fillRect(tx, ty, tw, th); ctx.strokeRect(tx, ty, tw, th);
   ctx.fillStyle = "#5CCB80"; ctx.font = "11px 'Space Mono',monospace"; ctx.textAlign = "center";
   ctx.fillText(`target ${cfg.target.width}×${cfg.target.height}`, tx + tw / 2, ty + th / 2 + 4);
+  ctx.fillStyle = "#8A8F96"; ctx.font = "10px 'Space Mono',monospace";
+  ctx.fillText("drag me to an edge", tx + tw / 2, ty + th / 2 + 18);
 }
 
-canvas.addEventListener("click", (e) => {
-  const r = canvas.getBoundingClientRect();
-  const cx = (e.clientX - r.left) * (canvas.width / r.width);
-  const cy = (e.clientY - r.top) * (canvas.height / r.height);
+function nearestEdge(pt) {
+  let best = null, bestD = Infinity;
   for (const hd of handles) {
-    const { x, y, w, h } = hd.rect;
-    if (cx >= x - 4 && cx <= x + w + 4 && cy >= y - 4 && cy <= y + h + 4) {
-      placement = { monitor: { x: hd.mon.x, y: hd.mon.y, w: hd.mon.w, h: hd.mon.h }, edge: hd.edge };
-      draw();
-      return;
-    }
+    const cx = hd.rect.x + hd.rect.w / 2, cy = hd.rect.y + hd.rect.h / 2;
+    const d = (cx - pt.x) ** 2 + (cy - pt.y) ** 2;
+    if (d < bestD) { bestD = d; best = hd; }
   }
+  return best;
+}
+function evXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
+}
+canvas.addEventListener("pointerdown", (e) => {
+  const p = evXY(e);
+  if (targetRect && p.x >= targetRect.x && p.x <= targetRect.x + targetRect.w &&
+      p.y >= targetRect.y && p.y <= targetRect.y + targetRect.h) {
+    dragging = true; dragXY = p;
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    draw();
+  }
+});
+canvas.addEventListener("pointermove", (e) => { if (dragging) { dragXY = evXY(e); draw(); } });
+canvas.addEventListener("pointerup", () => {
+  if (!dragging) return;
+  dragging = false;
+  if (snapTo) placement = { monitor: { x: snapTo.mon.x, y: snapTo.mon.y, w: snapTo.mon.w, h: snapTo.mon.h }, edge: snapTo.edge };
+  dragXY = null; draw();
 });
 
 // ── actions ──────────────────────────────────────────────────────────────────────────────
