@@ -168,6 +168,7 @@ class Agent(capture.InputCapture):
         self.kkeys = []
         self._send_abs()   # drop held buttons on the target
         self._send_keys()  # release held keys on the target
+        self._send("E 0\n")   # status LED off — client-initiated Release won't emit Deactivated
         try:
             self.portal.Release(self.session,
                                 {"activation_id": dbus.UInt32(self.activation_id)},
