@@ -193,11 +193,13 @@ class Agent(capture.InputCapture):
         self.kkeys = []
         self.captured = True
         self._send_abs()
+        self._send("E 1\n")   # status LED on — input is going to the target
         log(f"╔═ CAPTURED — driving target (edge={self.edge})")
         self._notify()
 
     def _on_deactivated(self, session, options):
         self.captured = False
+        self._send("E 0\n")   # status LED off
         log("╚═ LOCAL")
         self._notify()
 

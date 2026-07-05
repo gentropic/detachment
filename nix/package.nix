@@ -26,6 +26,7 @@ python3Packages.buildPythonApplication {
   pythonImportsCheck = [
     "detachment.config" "detachment.hid" "detachment.geometry" "detachment.evdev_hid"
     "detachment.bluez" "detachment.hidd" "detachment.websettings" "detachment.reset"
+    "detachment.led"
   ];
 
   meta = {

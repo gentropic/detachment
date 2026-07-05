@@ -22,9 +22,10 @@ import dbus
 import dbus.mainloop.glib
 from gi.repository import GLib
 
-from . import bluez, config, hid
+from . import bluez, config, hid, led
 
 SOCK_PATH = config.SOCKET_PATH
+LED_PATH = None   # resolved in main() (a *::capslock LED, or None)
 
 
 def log(msg):
@@ -51,6 +52,8 @@ def handle_line(link, jiggler, line):
             interval = float(parts[2]) if len(parts) > 2 else jiggler.interval
             pixels = int(parts[3]) if len(parts) > 3 else jiggler.pixels
             jiggler.configure(on, interval, pixels)
+        elif cmd == "E":                   # E 1|0 — status LED (e.g. jt's CapsLock light)
+            led.set_led(LED_PATH, parts[1].lower() not in ("0", "off", "false"))
         else:
             log(f"unknown command {cmd!r}")
     except Exception as e:   # never let one malformed line kill the serve loop
@@ -167,7 +170,11 @@ def serve(link, jiggler):
 
 
 def main():
+    global LED_PATH
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))   # -> finally: cleanup on kill/stop
+    LED_PATH = led.find_led()
+    if LED_PATH:
+        log(f"status LED: {LED_PATH}")
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     profilemgr, agentmgr, registered = bluez.setup_bluez(bus)
@@ -190,6 +197,7 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
+        led.set_led(LED_PATH, False)
         bluez.cleanup(profilemgr, agentmgr, registered)
         if os.path.exists(SOCK_PATH):
             os.unlink(SOCK_PATH)
