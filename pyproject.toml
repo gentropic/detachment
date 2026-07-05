@@ -1,0 +1,22 @@
+[project]
+name = "detachment"
+version = "0.1.0"
+description = "Present a Linux box as a Bluetooth HID device driven by a Wayland screen-edge capture region — a KVM with no software on the target."
+requires-python = ">=3.11"
+# NOTE: snegg (libei wrapper) is NOT on PyPI — it's provided by the nix build (fetched from
+# gitlab.freedesktop.org/libinput/snegg) alongside libei. dbus-python + PyGObject come from nix too.
+dependencies = [
+  "dbus-python",
+  "PyGObject",
+]
+
+[project.scripts]
+detachment-hidd = "detachment.hidd:main"   # system service: root BT HID emitter
+detachment = "detachment.tray:main"         # user service: capture agent + GTK tray/settings
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["detachment*"]
