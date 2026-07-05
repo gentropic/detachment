@@ -16,6 +16,7 @@ match() { ls -d /sys/class/leds/*"$filter"* 2>/dev/null; }
 
 # Free the LED from its trigger so manual brightness writes take effect.
 free_trigger() { echo none > "$1/trigger" 2>/dev/null || true; }
+maxb() { cat "$1/max_brightness" 2>/dev/null || echo 1; }
 
 case "$cmd" in
   list)
@@ -27,27 +28,30 @@ case "$cmd" in
     done ;;
 
   on|off)
-    v=$([ "$cmd" = on ] && echo 1 || echo 0)
-    for l in $(match); do free_trigger "$l"; echo "$v -> $(basename "$l")"; echo "$v" > "$l/brightness"; done ;;
+    for l in $(match); do
+      free_trigger "$l"
+      v=$([ "$cmd" = on ] && maxb "$l" || echo 0)
+      echo "$v -> $(basename "$l")"; echo "$v" > "$l/brightness"
+    done ;;
 
   blink)
     found=$(match)
     [ -z "$found" ] && { echo "no LEDs match '*$filter*'"; exit 1; }
     for l in $found; do
-      free_trigger "$l"
-      echo "--- blinking $(basename "$l") (trigger freed) — is a key lighting up? ---"
-      for _ in 1 2 3 4 5 6; do echo 1 > "$l/brightness"; sleep 0.4; echo 0 > "$l/brightness"; sleep 0.3; done
+      free_trigger "$l"; m=$(maxb "$l")
+      echo "--- blinking $(basename "$l") at brightness $m — see anything? ---"
+      for _ in 1 2 3 4 5 6; do echo "$m" > "$l/brightness"; sleep 0.4; echo 0 > "$l/brightness"; sleep 0.3; done
     done
     echo "done." ;;
 
   stick)
     l="/sys/class/leds/$filter"
     [ -e "$l/brightness" ] || { echo "no such LED: $filter (use the full name from 'list')"; exit 1; }
-    free_trigger "$l"
-    echo 1 > "$l/brightness"
-    echo -n "set 1; re-reading for 5s: "
-    for _ in $(seq 1 10); do printf '%s' "$(cat "$l/brightness")"; sleep 0.5; done
-    echo "  (all 1 = ours; drops to 0 = something clobbers it)"
+    free_trigger "$l"; m=$(maxb "$l")
+    echo "$m" > "$l/brightness"
+    echo -n "set $m; re-reading for 5s: "
+    for _ in $(seq 1 10); do printf '%s ' "$(cat "$l/brightness")"; sleep 0.5; done
+    echo "  (stays = ours; drops to 0 = something clobbers it)"
     echo 0 > "$l/brightness" ;;
 
   *) echo "usage: $0 [list|blink|on|off|stick] [filter]"; exit 1 ;;
