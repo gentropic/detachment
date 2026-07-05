@@ -97,33 +97,39 @@ class Jiggler:
 
 
 class LedController:
-    """Three-state status LED: off = no HID link, heartbeat = connected/idle, solid = driving the
-    target. `captured` is set by the agent's E command; link state is read from the HidLink. Resolves
-    the LED path in the loop (keyd re-creates input devices, so it may appear after startup)."""
+    """Three-state status LED: off = no HID link, green heartbeat = connected/idle, solid red =
+    driving the target. `captured` is set by the agent's E command; link state is read from the
+    HidLink. Resolves the LED lazily (keyd re-creates input devices, so it may appear after startup)
+    and hands it back to firmware on exit via `restore()`."""
     def __init__(self, link):
         self.link = link
         self.captured = False
+        self.led = None
+
+    def restore(self):
+        if self.led:
+            self.led.restore()
 
     def run(self):
-        path = None
         while True:
-            if not path:
-                path = led.find_led()
-                if path:
-                    log(f"status LED: {path}")
+            if self.led is None:
+                d = led.find_led()
+                if d:
+                    self.led = led.Led(d)
+                    log(f"status LED: {d} ({'rgb' if self.led.multicolor else 'mono'})")
                 else:
                     time.sleep(2)
                     continue
             if not self.link.interrupt:
-                led.set_led(path, False)
+                self.led.off()
                 time.sleep(0.7)
             elif self.captured:
-                led.set_led(path, True)            # solid while driving
+                self.led.color("red")              # solid red — input redirected to the target
                 time.sleep(0.7)
             else:
-                led.set_led(path, True)            # connected/idle heartbeat
+                self.led.color("green")            # connected/idle green heartbeat
                 time.sleep(0.12)
-                led.set_led(path, False)
+                self.led.off()
                 time.sleep(1.8)
 
 
@@ -228,7 +234,8 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        led.set_led(led.find_led(), False)
+        if LEDCTL:
+            LEDCTL.restore()
         bluez.cleanup(profilemgr, agentmgr, registered)
         if os.path.exists(SOCK_PATH):
             os.unlink(SOCK_PATH)
