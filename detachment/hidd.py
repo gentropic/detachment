@@ -97,10 +97,11 @@ class Jiggler:
 
 
 class LedController:
-    """Three-state status LED: off = no HID link, green heartbeat = connected/idle, solid red =
-    driving the target. `captured` is set by the agent's E command; link state is read from the
-    HidLink. Resolves the LED lazily (keyd re-creates input devices, so it may appear after startup)
-    and hands it back to firmware on exit via `restore()`."""
+    """Three-state status LED: off = no HID link, green-over-white heartbeat = connected/idle (a
+    green pulse over the default-looking white baseline), solid red = driving the target. `captured`
+    is set by the agent's E command; link state is read from the HidLink. Resolves the LED lazily
+    (keyd re-creates input devices, so it may appear after startup) and hands it back to firmware on
+    exit via `restore()`."""
     def __init__(self, link):
         self.link = link
         self.captured = False
@@ -127,9 +128,9 @@ class LedController:
                 self.led.color("red")              # solid red — input redirected to the target
                 time.sleep(0.7)
             else:
-                self.led.color("green")            # connected/idle green heartbeat
+                self.led.color("green")            # connected/idle: green heartbeat pulse…
                 time.sleep(0.12)
-                self.led.off()
+                self.led.color("white")            # …over the default-looking white baseline
                 time.sleep(1.8)
 
 
