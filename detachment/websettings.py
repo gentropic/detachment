@@ -5,7 +5,7 @@ web.bind to jt's tailnet IP to configure from another machine.
 
   GET  /api/state    -> { armed, captured, jiggler, monitors:[{x,y,w,h}], config }
   POST /api/config   -> save the full config object
-  POST /api/action   -> { action: enable | disable | jiggler_on | jiggler_off }
+  POST /api/action   -> { action: enable | disable | release | jiggler_on | jiggler_off }
 
 Static files are served from detachment/web/. Portal/D-Bus actions are marshalled to the GLib main
 thread via idle_add (dbus isn't thread-safe from the HTTP worker).
@@ -46,6 +46,8 @@ class _Backend:
                 self.agent.enable()
             elif name == "disable":
                 self.agent.disable()
+            elif name == "release":
+                self.agent.release()
             elif name in ("jiggler_on", "jiggler_off"):
                 on = name == "jiggler_on"
                 self.agent.set_jiggler(on)

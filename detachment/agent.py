@@ -9,6 +9,7 @@ screen edge and drives the target — with no software on it.
 Config (`~/.config/detachment/config.json`): barrier edge, target primary size, release options
 (walk-back to the entry edge + CapsLock+Esc), scroll (invert/speed). CapsLock is never forwarded.
 """
+import signal
 import socket
 import time
 
@@ -279,11 +280,13 @@ def run(bus=None, loop=None, start_armed=True):
     ag = Agent(bus, loop)
     ag._start_armed = start_armed
     ag.start()
-    # Hyper+Esc global shortcut (fires ABOVE the capture layer, unlike keys in the captured stream —
-    # needed once keyd maps CapsLock→Hyper). Falls back silently if the portal isn't available.
-    from . import shortcuts
-    ag._shortcuts = shortcuts.GlobalShortcuts(bus, lambda sid: ag.release() if sid == "release" else None)
-    ag._shortcuts.start()
+    # Release trigger. keyd maps CapsLock→Hyper, so the agent never sees a raw CapsLock in the
+    # captured stream, and GNOME's GlobalShortcuts portal won't honour a preferred_trigger (it
+    # returned BindShortcuts=2 here). Instead a GNOME custom keybinding (gcunix dconf: Hyper+Esc)
+    # sends SIGUSR1 to this process — mutter processes keybindings above the InputCapture grab, so
+    # it fires even while capturing. SIGUSR1 -> release back to local.
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1,
+                         lambda *_: (ag.release(), GLib.SOURCE_CONTINUE)[1])
     return ag, loop
 
 
