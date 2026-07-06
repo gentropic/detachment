@@ -170,13 +170,18 @@ class Agent(capture.InputCapture):
         self._send_abs()   # drop held buttons on the target
         self._send_keys()  # release held keys on the target
         self._send("E 0\n")   # status LED off — client-initiated Release won't emit Deactivated
+        # Drop the LOCAL pointer in the MIDDLE of jt's zone, not on the barrier edge — otherwise the
+        # very next move re-crosses the (still-armed) barrier and instantly re-captures.
+        w, h, zx, zy = self.zone
+        home = dbus.Struct((dbus.Double(zx + w / 2.0), dbus.Double(zy + h / 2.0)), signature="dd")
         try:
             self.portal.Release(self.session,
-                                {"activation_id": dbus.UInt32(self.activation_id)},
+                                {"activation_id": dbus.UInt32(self.activation_id),
+                                 "cursor_position": home},
                                 signature="oa{sv}")
         except dbus.DBusException as e:
             log(f"Release failed: {e.get_dbus_name()}")
-        log("released -> LOCAL")
+        log("released -> LOCAL (cursor re-homed to jt zone center)")
 
     # ── portal activation ───────────────────────────────────────────────────────────────────
     def _on_activated(self, session, options):
