@@ -22,7 +22,10 @@ from . import capture, config, evdev_hid, geometry
 
 SOCK_PATH = config.SOCKET_PATH
 
-KEY_ESC, KEY_CAPSLOCK = 1, 58
+KEY_ESC, KEY_CAPSLOCK, KEY_GRAVE = 1, 58, 41
+# Hyper = Ctrl+Alt+Super+Shift (keyd's CapsLock layer). Each tuple entry is a modifier group's HID
+# bits (left|right); "all groups held" = the Hyper chord, regardless of which side.
+HYPER_GROUPS = (0x11, 0x22, 0x44, 0x88)   # ctrl, shift, alt, meta
 # HID mouse buttons: bit0 L, bit1 R, bit2 M, bit3 Back(4), bit4 Forward(5).
 # libinput/evdev back/forward vary (SIDE/BACK -> back; EXTRA/FORWARD -> forward), so map all.
 BTN_BIT = {
@@ -260,6 +263,15 @@ class Agent(capture.InputCapture):
             return
         if not self.captured:
             return
+        # Hyper+` (backtick) = stand down. Detected IN the captured stream: keyd maps CapsLock→Hyper,
+        # so while capturing the agent sees the four Hyper modifiers in kmod plus KEY_GRAVE. A GNOME
+        # keybinding is unreliable here (mutter routes keys into libei during capture, not to its
+        # shortcuts), so we catch it ourselves and fully disable() — release AND disarm the barrier,
+        # so returning to jt doesn't immediately re-cross the still-live edge.
+        if code == KEY_GRAVE and press and all(self.kmod & g for g in HYPER_GROUPS):
+            log("Hyper+` — stand down (release + disarm)")
+            self.disable()
+            return
         # keyboard passthrough: translate evdev -> HID and stream the full report state
         if code in evdev_hid.MOD:
             bit = evdev_hid.MOD[code]
@@ -285,14 +297,13 @@ def run(bus=None, loop=None, start_armed=True):
     ag = Agent(bus, loop)
     ag._start_armed = start_armed
     ag.start()
-    # Control signals from GNOME custom keybindings (gcunix dconf). keyd maps CapsLock→Hyper, so the
-    # agent never sees a raw CapsLock in the captured stream, and GNOME's GlobalShortcuts portal
-    # won't honour a preferred_trigger (BindShortcuts=2 here). Instead the compositor runs a keybind
-    # that signals this process — mutter handles keybindings ABOVE the InputCapture grab, so they
-    # fire even while capturing.
-    #   SIGUSR1 (Hyper+Esc) -> release capture back to local (panic).
-    #   SIGUSR2 (Hyper+F1)  -> toggle the barrier armed/disarmed (target 1; F2..F12 land here when
-    #                          multi-target arrives, selecting the Nth target instead of a toggle).
+    # Control signals from GNOME custom keybindings (gcunix dconf). Used for actions needed when NOT
+    # capturing — the compositor delivers keybindings normally then. (During capture mutter routes
+    # keys into the libei stream, so a keybinding is unreliable; the in-capture RELEASE is detected
+    # in the stream itself — see _on_key's Hyper+` handler.)
+    #   SIGUSR1 -> release capture back to local (programmatic hook; in-capture release is in-stream).
+    #   SIGUSR2 (Hyper+F1) -> toggle the barrier armed/disarmed (target 1; F2..F12 land here when
+    #                         multi-target arrives, selecting the Nth target instead of a toggle).
     def _sig_release(*_):
         ag.release()
         return GLib.SOURCE_CONTINUE
