@@ -212,7 +212,8 @@ per-login consent prompt (portal-enforced; no supported "remember forever").
 
 ## Design notes & lessons
 
-Things that cost time and are worth not re-learning:
+The full PoC → shipped narrative lives in [`docs/history.md`](docs/history.md). Things that cost
+time and are worth not re-learning:
 
 - **Absolute is single-monitor on Windows.** Both a plain absolute mouse and a pen digitizer bind to
   the primary display; the digitizer bought nothing (still primary-only) while costing middle-click /
