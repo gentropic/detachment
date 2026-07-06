@@ -194,6 +194,19 @@ plaintext.
   geometry). The open question is the BT layer: whether jt can hold **simultaneous** HID links to
   several hosts (piconet master, ~≤7) for instant edge-crossing — worth a feasibility spike — or falls
   back to switch-on-select (reliable, ~1–2 s reconnect). Start with paired-all + explicit select.
+- **Cross-platform targets (relative mode) — Android, macOS, Linux, iOS.** Today the target is
+  Windows because detachment sends an **absolute** pointer (1:1 into the target's screen space), which
+  Windows honours via a plain absolute-mouse report — that's what makes the edge-cross land the cursor
+  at the *same spot*. Other hosts treat a BT pointer as **relative** and largely ignore absolute/
+  digitizer reports; **Android** is the sharpest case (relative-only, plus rotation/DPI/variable screen
+  size break a fixed target-space mapping). Keyboard + relative mouse *are* portable — classic BT HID
+  is host-agnostic, and Android/macOS/Linux pair a BT keyboard/mouse fine — so the unlock is a
+  **relative pointer mode**: feed motion deltas and let the target move its own cursor. Trade-offs:
+  you lose strict 1:1 edge-crossing and must cope with the target's own pointer acceleration (desync).
+  The relative report already exists in the descriptor (report 2); the work is a delta mapper +
+  per-target geometry + a mode toggle. Android is the most likely reason we'd finally build it. This
+  also happens to be the same relative-mode path that would let a *single* Windows target span **all**
+  its monitors (see "Honest constraints").
 - **Status GUI** (LOCAL vs CAPTURED, target picker) and **NixOS module** (two systemd units).
 
 ## Validated on jt (probe, 2026-07-05)
