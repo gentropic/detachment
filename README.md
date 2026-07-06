@@ -1,10 +1,9 @@
 # detachment
 
-> **Provisional name** (a *detachment* is the low-angle surface along which one crustal block
-> slides a long way over another — the blocks stay coupled across it but move independently).
-> Sibling to **[RelayKVM](https://github.com/endarthur/RelayKVM)** (named for relay ramps): same
-> fault-structure naming whim, opposite topology. Bikeshed freely — candidates: *décollement,
-> heave, throw, slip, transfer-zone*.
+> A *detachment* is the low-angle surface along which one crustal block slides a long way over
+> another — the blocks stay coupled across it but move independently. Sibling to
+> **[RelayKVM](https://github.com/endarthur/RelayKVM)** (named for relay ramps): same fault-structure
+> naming whim, opposite topology.
 
 **One machine's keyboard and mouse "detach" at a screen edge and slide onto a second machine —
 which sees only a Bluetooth keyboard/mouse and runs no software at all.**
@@ -13,8 +12,9 @@ Software-free-on-the-target multi-machine input sharing, self-hosted. Think Syne
 Apple Universal Control, but the *target installs nothing* because the controlling box
 (**jt** — the gcunix Framework 13) impersonates a Bluetooth HID device directly.
 
-Status: **SPEC / pre-PoC.** Lives in the `agents` repo for now; spins out to its own repo once
-PoC-1 lands. No code yet — this document is the design.
+**Status: built and running.** Full keyboard + 5-button mouse + scroll + absolute pointer over
+classic Bluetooth HID to a Windows 11 target, driven by a Wayland screen-edge capture region on jt.
+Packaged as a NixOS flake (two systemd services), consumed by gcunix. Deployed on jt 2026-07-05.
 
 ---
 
@@ -39,11 +39,9 @@ superpower and its reason to exist.
         cursor here…                    …cross the edge →      …cursor appears here
 ```
 
-You already **proved the hard half** of this: `RelayKVM/docs/RG34XX.md` is a working PoC of a
-Linux box being a classic-Bluetooth-HID keyboard that Windows 11 pairs with and accepts keystrokes
-from. Its "Software TODO" list is all unchecked. **detachment finishes that daemon, adds a mouse
-(absolute), replaces the BLE-relay front-end with local input capture, and makes the whole thing
-declarative on NixOS.** jt is the ideal host: always-on, config-as-code, Python-native.
+detachment is a **complement** to the RelayKVM Pico, not a replacement: it's the zero-hardware,
+always-on, "drive the machines that live on my desk" node. The Pico still owns pre-boot / BIOS /
+disk-unlock / dark-machine scenarios (see constraints below).
 
 ## Honest constraints (what this is *not*)
 
@@ -54,136 +52,136 @@ Because the target is reached over **Bluetooth HID**, not USB:
 - **Pair once, trust always.** The target must be Bluetooth-capable and paired a single time.
 - **Can't wake a fully-off machine.** BT-HID activity may wake a *sleeping, paired* host if it
   allows BT wake; it can't power on a dark one.
-- **Absolute pointer = the target's PRIMARY monitor only.** An absolute HID pointing device (mouse
-  *or* digitizer) binds to a single display on Windows — TESTED, both map to primary; there's no
-  reliable way to span multiple real monitors. This is fine for the intended use — a laptop driving
-  a *headless/single-screen* box (a work PC controlled over BLE with no monitors attached, or its
-  primary): you get true 1:1 absolute tracking. If you need to reach a target's secondary monitors,
-  that's the RELATIVE-mode path (Windows moves its own cursor across the whole desktop, trading strict
-  1:1) — deliberately not built; absolute is the chosen design.
+- **Absolute pointer = the target's PRIMARY monitor only.** An absolute HID pointing device binds
+  to a single display on Windows (tested: both a plain absolute mouse *and* a pen digitizer map to
+  primary). This suits the intended use — a laptop driving a *headless / single-screen* box with
+  true 1:1 tracking. Spanning a target's secondary monitors needs **relative mode** (the target
+  moves its own cursor, trading strict 1:1); that's on the roadmap, not built. Absolute is the
+  chosen design.
+- **First-class target is Windows.** Other hosts (Android, macOS, Linux, iOS) accept BT keyboard +
+  *relative* mouse fine, but ignore our absolute reports — so they also wait on relative mode. See
+  the roadmap.
 
-→ detachment is a **complement** to the RelayKVM Pico, not a replacement. It's the zero-hardware,
-always-on, "drive the machines that live on my desk" node.
+## How it works
 
-## Decisions locked for the first build
+Two processes that meet over a unix socket — a **privilege split**, because emitting HID needs
+Bluetooth/root and capturing input needs the live user session:
 
-| Axis | Choice | Why |
+### `detachment-hidd` — the root HID emitter (system service)
+
+Holds the classic Bluetooth HID link to the target and does nothing UI.
+
+- **BlueZ over D-Bus** (`dbus-python`): an auto-accept pairing `Agent1` and an HID profile
+  registered via `ProfileManager1.RegisterProfile` (UUID `0x1124`) whose SDP record embeds our
+  report descriptor. `bluetoothd` runs with `--noplugin=input` (+ `--compat`) so jt is an HID
+  *device*, not a host, and frees the HID L2CAP PSMs.
+- **L2CAP** PSMs **17 (control) / 19 (interrupt)** via stdlib `socket.AF_BLUETOOTH`; input reports
+  go out on the interrupt channel with the `0xA1` DATA-input header.
+- **Report descriptor** — three reports: **(1)** boot-compatible keyboard; **(2)** 5-button
+  relative mouse + wheel + AC Pan; **(3)** 5-button **absolute** pointer (X/Y 0–32767) + wheel +
+  pan. Buttons: left / right / middle / back / forward.
+- **Self-healing link:** prefers **device-initiated reconnect** (jt re-connects to the paired host
+  on startup, like a real keyboard waking) with a host-initiated listen as fallback, and a keepalive
+  that re-establishes a dropped link — so a daemon restart doesn't need a "toggle it on Windows"
+  dance.
+- **Line protocol** on `/run/detachment/hid.sock` (mode 0666, so the session agent can connect):
+  `A x y buttons wheel pan` (absolute pointer), `K mod k1..k6` (keyboard), `J on|off …` (jiggler),
+  `E 0|1` (capture state, for the LED).
+- Also runs the **jiggler** and drives the **status LED** (below).
+
+### `detachment` — the capture agent + tray (user service, in GNOME)
+
+- **Wayland input capture:** drives `org.freedesktop.portal.InputCapture` directly over D-Bus
+  (CreateSession → GetZones → SetPointerBarriers → ConnectToEIS → Enable) and feeds the returned EIS
+  fd to **libei** via [**snegg**](https://gitlab.freedesktop.org/libinput/snegg). A pointer barrier
+  sits on jt's chosen screen edge (default **right**); crossing it emits `Activated` and hands the
+  exclusive input stream. No virtual monitor — you look at the target's own screen.
+- **Coordinate mapper:** libei gives relative deltas; we integrate them into a virtual **absolute**
+  cursor in the *target's* coordinate space, scale to 0–32767, and emit report 3. Absolute keeps
+  jt's virtual cursor and the target's real cursor locked 1:1 (relative would desync when the
+  target clamps at its own edge). Keyboard / buttons / scroll pass straight through (evdev → HID).
+- **Tray** (GTK3 AppIndicator) + a **web settings/arrangement editor** (see below). Comes up
+  **disarmed** so it doesn't hijack the edge until you enable it.
+
+### Controls
+
+| Action | How | Notes |
 |---|---|---|
-| **First target** | **Windows PC** | On the desk; classic BR/EDR HID is RG34XX-proven against Win11 |
-| **Target HID profile** | **Classic Bluetooth HID (BR/EDR, HID profile 0x1124)** | Best desktop compatibility; matches the PoC |
-| **Input capture** | **Pure Wayland — `InputCapture` portal + libei** | GNOME/mutter path; no X11 fallback even though it's more work |
-| **"Monitor"** | **Capture *region* only — a barrier on jt's edge, no dummy HDMI / virtual display** | Portal barriers sit on the real layout boundary; you look at the target's own screen |
-| **Pointer mode** | **Absolute (digitizer descriptor), relative as PoC-shortcut/fallback** | 1:1 mapping, no edge-clamp desync; RelayKVM's proven Windows-absolute approach |
-| **Language** | **Python** | jt's default; BlueZ D-Bus + L2CAP sockets are ergonomic from Python |
+| **Arm / disarm** the edge | **Hyper+F1**, or tray → *Enable capture* | Hyper = keyd's CapsLock (hold). Arm makes the barrier live. |
+| **Drive the target** | cross the armed edge | `CAPTURED`; your kbd+mouse now go to the target. |
+| **Stand down** | **Hyper+`** (CapsLock+backtick) | Releases *and* disarms; cursor re-homes to jt's screen centre. |
+| **…or walk back** | return the cursor to the entry edge | `release.walk_back` (default on). |
+| **Jiggler** | tray → *Jiggler*, or config | Tiny keep-awake move every ~30 s. |
 
-Roads not taken (revisit later): BLE HID-over-GATT (HOGP) for phone/tablet targets; X11 pointer
-barriers for a faster spike; the RelayKVM NUS/WebSocket relay front-end (a different project).
+**Status LED** (Framework power button, `chromeos:multicolor:power` RGB): **off** = no BT link ·
+**green heartbeat over white** = connected / idle · **solid red** = driving the target · returns to
+firmware **white** when the daemon stops. (The physical CapsLock key light is EC-owned and not
+sysfs-drivable — hence the power LED.)
 
----
+**Web arrangement editor** — the user service serves a small HTML/JS app at `http://127.0.0.1:8730`
+(basalt-themed canvas): it draws jt's actual monitors and lets you click an outer edge to attach the
+target, plus a config form and live state. Changes apply live (no restart). Set `web.bind` to jt's
+tailnet IP to configure it from another machine.
 
-## Architecture
+## Install (NixOS / gcunix)
 
-Two halves that meet in a coordinate mapper.
+detachment is a flake, consumed by [gcunix](https://github.com/endarthur/gcunix) as an input:
 
-### 1. Target side — jt as a classic Bluetooth HID device
+```nix
+# flake.nix
+inputs.detachment.url = "github:gentropic/detachment";
+inputs.detachment.inputs.nixpkgs.follows = "nixpkgs";
 
-The RG34XX-proven path, generalized from keyboard-only to a full combo device.
+# host config
+imports = [ detachment.nixosModules.default ];
+services.detachment.enable = true;   # + services.detachment.audio = true; to keep A2DP/AVRCP
+```
 
-- **Profile registration:** register an HID profile with BlueZ over D-Bus
-  (`org.bluez.ProfileManager1.RegisterProfile`, UUID `0x1124`) carrying an SDP record that embeds
-  our **HID report descriptor**. (The RG34XX PoC used the legacy `sdptool add KEYB` + `bluetoothd
-  --compat`; registering via `ProfileManager1` is the modern way and may avoid `--compat` — spike
-  both.)
-- **L2CAP channels:** listen on the two HID PSMs — **0x11 (control)** and **0x13 (interrupt)** —
-  via `socket.socket(AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP)`. On connect from the paired
-  host, push input reports on the interrupt channel (`0xA1` DATA-input transaction header).
-- **Adapter prep (declarative on NixOS):** set device class to keyboard/mouse combo
-  (`0x0025C0`-ish), **disable BlueZ's `input` plugin** (`bluetoothd --noplugin=input`) so jt acts
-  as an HID *device* and doesn't try to be an HID *host*, discoverable + pairable for the one-time
-  pair.
-- **Report descriptor** (multi-report; reuse RelayKVM's proven Windows-absolute digitizer):
-  - Report 1 — **Keyboard** (modifier byte, reserved, 6 keycodes) — standard boot-compatible.
-  - Report 2 — **Mouse, relative** (buttons, dx, dy, wheel) — fallback / gaming toggle.
-  - Report 3 — **Pointer, absolute / digitizer** (buttons, X 0–32767, Y 0–32767, wheel) — the
-    default; what the capture edge drives.
-  - Report 4 — **Consumer/Media** (volume, play/pause, etc.) — cheap to include.
+That brings up `detachment-hidd` (system) and `detachment` (user, in the graphical session), and the
+BlueZ device-role tweaks. On jt it pairs with the recommended companion setup:
 
-### 2. Controller side — Wayland input capture on jt
+- **keyd** maps **CapsLock → Hyper** (`overload(hyper, esc)`; hold = Ctrl+Alt+Super+Shift, tap =
+  Esc) so CapsLock is a conflict-free command leader. gcunix `modules/keyd.nix`.
+- A **GNOME custom keybinding** (gcunix dconf) binds **Hyper+F1** → arm/disarm. Release is *not* a
+  keybinding — see design notes.
 
-- **`org.freedesktop.portal.InputCapture`** (xdg-desktop-portal + the GNOME backend). Create a
-  session, `SetPointerBarriers` along jt's chosen edge (default **right**). On barrier hit the
-  portal emits `Activated` and hands an **EIS** socket; connect **libei** to it and receive the
-  exclusive input stream (relative motion, buttons, keys, scroll) while captured.
-- **No virtual monitor.** The barrier is on the boundary of jt's *existing* display. Nothing is
-  rendered beyond the edge; you watch the target's own monitor.
-- **State machine:**
-  - `LOCAL` — normal jt use; barrier armed on the right edge.
-  - `CAPTURED` — entered when the pointer crosses the barrier. Local kbd+mouse are grabbed and
-    fed to the target instead of jt. Entry seeds the virtual cursor at the mapped edge position.
-  - **Exit** back to `LOCAL` — no monitor beyond the edge, so *we* decide the exit: virtual cursor
-    walked back to the entry edge (x ≤ 0), **or** a panic hotkey (e.g. `ScrollLock` / a chord).
-    Release the capture session; jt's cursor resumes.
+Config lives at `~/.config/detachment/config.json` (deep-merged over defaults): `barrier_edge`,
+`barrier_monitor` (which of jt's monitors the edge attaches to), `target` (name / width / height /
+mac), `release` (walk_back, capslock_esc), `scroll` (invert / detent / smoothing), `jiggler`
+(enable / interval / pixels), `web` (bind / port). Re-pair after changing `audio`.
 
-### 3. The coordinate mapper (why absolute)
+Re-pairing gotcha: clear a stale jt-side bond with `detachment-reset` (or `bluetoothctl remove`)
+before re-pairing if Windows says "can't connect."
 
-libei gives **relative deltas** while captured. We integrate them into a virtual absolute cursor
-in the **target's** coordinate space (`screen = {width, height}`, configured per target), clamp to
-`[0, w) × [0, h)`, scale to `0–32767`, and emit an **absolute** HID report (Report 3).
+## Repo layout
 
-Sending *relative* to Windows instead would desync: when Windows' own cursor hits its screen edge
-it clamps, but our integrated position keeps travelling, so the two drift apart. Absolute keeps
-jt's virtual cursor and Windows' real cursor locked 1:1 — the whole reason the edge-cross feels
-right. (Relative stays available as a toggle for raw-input games that dislike absolute/digitizer.)
+```
+detachment/
+  hid.py          report descriptor + report builders
+  bluez.py        BlueZ agent/profile, L2CAP, device-initiated reconnect, bond reset
+  hidd.py         detachment-hidd: link manager, LED controller, jiggler, socket server
+  capture.py      InputCapture portal flow (base class)
+  agent.py        capture agent: libei deltas → absolute HID; in-stream release; signal hooks
+  geometry.py     pure virtual-cursor / target-space mapping
+  evdev_hid.py    evdev keycode → HID usage maps
+  led.py          multicolor power-LED driver
+  websettings.py  local HTTP + JSON API (state / config / action), serves web/
+  web/            the arrangement editor (index.html, app.js, style.css)
+  tray.py         GTK3 AppIndicator tray
+  config.py       config schema + load/save
+  reset.py        detachment-reset CLI
+nix/{snegg,package,module}.nix · flake.nix · pyproject.toml · scripts/led-test.sh
+```
 
-Keyboard + scroll + buttons pass straight through (libei event → HID report), no integration needed.
-
----
-
-## NixOS packaging (the config-as-code payoff)
-
-Every manual RG34XX step becomes flake config. Fits gcunix's droppable-module pattern.
-
-- **System module** (`hardware.bluetooth` + a `bluetoothd --noplugin=input` ExecStart override +
-  adapter class); options: `services.detachment = { enable; targetMac; screen = { width; height; };
-  entryEdge = "right"; panicHotkey; }`.
-- **User-session agent** — the capture half needs the live Wayland session (portal + libei), so it
-  runs as a **user** systemd service inside GNOME, not a system service.
-- **Privilege split to resolve:** L2CAP/HID emission needs Bluetooth access (`bluetooth` group or a
-  small privileged helper); input capture needs the user session. Likely one user-service process
-  if the user has Bluetooth socket access — otherwise a thin privileged HID-emitter + an unprivileged
-  capture agent over a local socket. **Decide during PoC-1.**
+Console scripts: `detachment-hidd` (root), `detachment` (tray+agent), `detachment-reset`.
 
 ## Security
 
-A paired BT-HID that can type into your Windows box is keystroke-injection capability by design.
-Gates: the daemon only ever connects to **one explicitly configured, interactively-paired target
-MAC**; a **panic hotkey** force-releases capture; it runs on jt (endar's own full-ops box), holds
-no secrets, and the pairing itself is a deliberate one-time trust event. Nothing here is committed
-plaintext.
-
----
-
-## Build order
-
-1. **PoC-1 — BT HID out (no capture yet). ✅ DONE (2026-07-05).** BlueZ classic HID *device* daemon
-   on jt (`poc1/`), paired to the Windows target; **keyboard, relative mouse, and absolute pointer
-   all confirmed** driving Windows 11. Absolute worked with a plain absolute-mouse report — **no
-   digitizer swap needed**. (Lone quirk: `abs 0 0` is a no-op — all-zero report dropped by Windows;
-   floor the clamp at 1 in the mapper.) Audio profiles made optional via `services.detachment.audio`
-   (default off) so jt presents as a clean keyboard/mouse. Pairing must happen with the daemon
-   running (it registers the agent + HID SDP); it self-cleans on exit.
-2. **PoC-2 — Wayland input capture (no target yet). ✅ DONE (2026-07-05).** `poc2/` — `InputCapture`
-   portal (driven directly over D-Bus; oeffis only does RemoteDesktop) + libei via **snegg** on jt:
-   right-edge barrier → `Activated` → EIS fd → `snegg.ei.Receiver`; `seat.bind()` on SEAT_ADDED
-   creates the device; captured `move`/`button`/`key` deltas print. Runs in jt's GNOME session.
-3. **Glue (PoC-3) — TWO processes** (privilege split, since HID needs root and capture needs the
-   user session): a **root HID emitter** (PoC-1's BT link) listening on a unix socket for
-   `abs/key/button` commands, and a **user-session capture agent** (PoC-2) that integrates libei
-   deltas → target-space absolute (`geometry.py`) and sends them over the socket. Plus the entry/exit
-   state machine (release when the virtual cursor walks back to the left edge, or a hotkey), keyboard
-   passthrough, abs/rel toggle, and the small status GUI (LOCAL vs CAPTURED).
-4. **NixOS-ify.** The BlueZ tweaks + daemon + options become a gcunix module; add a status line /
-   tray hint for LOCAL vs CAPTURED; gatus is N/A (it's a desktop feature, not a service).
+A paired BT-HID that can type into your target is keystroke-injection capability by design. Gates:
+the daemon connects only to the one interactively-paired target; **Hyper+`** force-releases capture;
+it runs on jt (endar's own full-ops box) and holds no secrets. The repo is public precisely because
+it's a general-purpose KVM tool with nothing sensitive in it. GNOME also gates input capture behind a
+per-login consent prompt (portal-enforced; no supported "remember forever").
 
 ## Roadmap
 
@@ -194,6 +192,8 @@ plaintext.
   geometry). The open question is the BT layer: whether jt can hold **simultaneous** HID links to
   several hosts (piconet master, ~≤7) for instant edge-crossing — worth a feasibility spike — or falls
   back to switch-on-select (reliable, ~1–2 s reconnect). Start with paired-all + explicit select.
+  The web editor is already the UI foundation (drop N target tiles); Hyper+F2..F12 would select the
+  Nth target the same dconf-keybinding way F1 arms today.
 - **Cross-platform targets (relative mode) — Android, macOS, Linux, iOS.** Today the target is
   Windows because detachment sends an **absolute** pointer (1:1 into the target's screen space), which
   Windows honours via a plain absolute-mouse report — that's what makes the edge-cross land the cursor
@@ -207,41 +207,48 @@ plaintext.
   per-target geometry + a mode toggle. Android is the most likely reason we'd finally build it. This
   also happens to be the same relative-mode path that would let a *single* Windows target span **all**
   its monitors (see "Honest constraints").
-- **Status GUI** (LOCAL vs CAPTURED, target picker) and **NixOS module** (two systemd units).
+- **Smaller:** GTK tray settings window (retired in favour of the web editor — could return);
+  Meshtastic-style out-of-band; a proper multi-target arrangement in the web editor.
 
-## Validated on jt (probe, 2026-07-05)
+## Design notes & lessons
 
-Read-only capability check of jt's current image — the locked path is viable:
+Things that cost time and are worth not re-learning:
 
-- **BT peripheral role: ✅** `bluetoothctl show` → `Roles: central` *and* `peripheral`. jt's adapter
-  can be an HID device (same capability the RG34XX PoC used).
-- **InputCapture portal: ✅ (package level)** GNOME Shell 50.2, `xdg-desktop-portal` 1.20.4,
-  `xdg-desktop-portal-gnome` 50.0 whose `gnome.portal` manifest advertises **InputCapture** — the
-  mutter backend implements it. Still needs a live in-session functional test.
-- **libei client: ⚠️ add it.** Not surfaced by the probe; mutter uses it internally but we must pull
-  `libei` explicitly and settle the Python-client question (see Risks #1).
-
-## Risks / to spike
-
-- **libei from Python.** libei is a C library; mature Python bindings are the open question.
-  Options: GObject-Introspection bindings if present, a small Rust/C helper exposing a socket, or
-  follow Deskflow's (C++) implementation. **This is the #1 thing PoC-2 must answer.**
-- **Portal availability.** Needs a recent `xdg-desktop-portal` + `xdg-desktop-portal-gnome` with
-  `InputCapture` support on our GNOME (26.05). Verify the version implements it.
-- **Windows absolute quirks.** Absolute pointer registers as a digitizer/touch device on Windows
-  (press-hold = right-click, no hover) and multi-monitor maps to the whole virtual-desktop bounding
-  box. Reuse RelayKVM's tuned descriptor; keep the relative toggle.
-- **BlueZ device-vs-host role.** Must disable the `input` plugin cleanly and confirm no re-grab
-  after suspend/resume; `--compat` may or may not be needed depending on registration path.
+- **Absolute is single-monitor on Windows.** Both a plain absolute mouse and a pen digitizer bind to
+  the primary display; the digitizer bought nothing (still primary-only) while costing middle-click /
+  hover semantics, so we use the plain absolute mouse. `abs 0 0` is a no-op (all-zero report dropped)
+  → floor the mapper at 1.
+- **libei from Python = snegg.** Peter Hutterer's ctypes wrapper, git-only (not on PyPI/nixpkgs),
+  packaged in `nix/snegg.nix`; needs `libei` on `LD_LIBRARY_PATH` (it dlopens it). snegg's `oeffis`
+  only speaks the RemoteDesktop portal, so InputCapture is driven directly over D-Bus. Must call
+  `seat.bind()` on `SEAT_ADDED` or no devices/motion ever arrive.
+- **Release is detected in the capture stream, not via a keybinding.** During active capture mutter
+  routes keys into the libei stream, so a GNOME custom keybinding fires only *intermittently* (looked
+  like "release does nothing"). Since keyd maps CapsLock→Hyper, the agent already sees the four Hyper
+  modifiers + backtick in-stream — `agent._on_key` catches **Hyper+`** and stands down. A GNOME
+  backtick keybinding would actively *hurt* (it'd steal the key from the stream), so it's absent.
+  **Arming** *is* a keybinding (Hyper+F1) because it happens when not capturing, where mutter
+  delivers shortcuts normally.
+- **GNOME GlobalShortcuts portal is a dead end here** — `BindShortcuts` returns response 2 and never
+  honours `preferred_trigger`; the raw chord then leaked to a logout. Use dconf custom-keybindings.
+- **Release must pass `cursor_position`.** The portal's `Release` takes a `(dd)` option; without it
+  the local pointer is dropped back *onto* the barrier and the next move instantly re-crosses. We
+  re-home to jt's zone centre and also disarm.
+- **The CapsLock key light is EC/firmware-owned** (not sysfs-drivable) — status uses the RGB
+  power-button LED instead.
+- **Re-pairing:** a stale jt-side bond (mismatched keys) is the usual "can't connect" — `detachment-reset`.
 
 ## References
 
-- **RelayKVM** — `docs/RG34XX.md` (the Linux BT-HID PoC + "Software TODO"), `relaykvm-adapter.js`
-  (NanoKVM protocol, keycodes, `moveMouseAbsolute` digitizer approach), seamless/portal mode.
+- **RelayKVM** — `docs/RG34XX.md` (the Linux BT-HID PoC), `relaykvm-adapter.js` (`moveMouseAbsolute`
+  digitizer approach), seamless/portal mode. detachment reuses its Windows-absolute descriptor
+  lessons.
 - **[EmuBTHID](https://github.com/Alkaid-Benetnash/EmuBTHID)** — classic BT HID keyboard/mouse
   emulation on Linux via BlueZ + L2CAP (the target-side backbone).
 - **[BlueZ D-Bus API](https://git.kernel.org/pub/scm/bluetooth/bluez.git/tree/doc)** —
   `ProfileManager1`, SDP records.
-- **InputCapture portal** — `org.freedesktop.portal.InputCapture` spec; **[libei](https://gitlab.freedesktop.org/libinput/libei)**.
+- **InputCapture portal** — `org.freedesktop.portal.InputCapture` spec ·
+  **[libei](https://gitlab.freedesktop.org/libinput/libei)** · **[snegg](https://gitlab.freedesktop.org/libinput/snegg)**.
 - **[Deskflow](https://github.com/deskflow/deskflow)** (ex-Synergy/Barrier) — reference Wayland
   edge-switch capture via portal + libei, and the relative-delta → remote-absolute cursor model.
+```
